@@ -6,4 +6,4 @@ This is an implementation of the paper "Dynamic Sparse Graph for Efficient Deep 
 2. Run 'make'.
 
 ## Usage
-./dsg_driver
+./mlp_driver
