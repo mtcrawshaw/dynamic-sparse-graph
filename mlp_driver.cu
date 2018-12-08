@@ -27,12 +27,32 @@ void load_network(float *fc1_weights, float *fc1_biases, float *fc2_weights, flo
     unsigned int fc3_rows = 10;
     unsigned int fc3_cols = 256;
 
-    fread(fc1_weights, sizeof(float), fc1_rows * fc1_cols, ptr);
+    float *temp_fc1_weights = (float*) malloc(fc1_rows * fc1_cols * sizeof(float));
+    float *temp_fc2_weights = (float*) malloc(fc2_rows * fc2_cols * sizeof(float));
+    float *temp_fc3_weights = (float*) malloc(fc3_rows * fc3_cols * sizeof(float));
+
+    fread(temp_fc1_weights, sizeof(float), fc1_rows * fc1_cols, ptr);
     fread(fc1_biases, sizeof(float), fc1_rows, ptr);
-    fread(fc2_weights, sizeof(float), fc2_rows * fc2_cols, ptr);
+    fread(temp_fc2_weights, sizeof(float), fc2_rows * fc2_cols, ptr);
     fread(fc2_biases, sizeof(float), fc2_rows, ptr);
-    fread(fc3_weights, sizeof(float), fc3_rows * fc3_cols, ptr);
+    fread(temp_fc3_weights, sizeof(float), fc3_rows * fc3_cols, ptr);
     fread(fc3_biases, sizeof(float), fc3_rows, ptr);
+
+    for (int i = 0; i < fc1_rows; i++) {
+	for (int j = 0; j < fc1_cols; j++) {
+	    fc1_weights[j * fc1_rows + i] = temp_fc1_weights[i * fc1_cols + j];
+	}
+    }
+    for (int i = 0; i < fc2_rows; i++) {
+	for (int j = 0; j < fc2_cols; j++) {
+	    fc2_weights[j * fc2_rows + i] = temp_fc2_weights[i * fc2_cols + j];
+	}
+    }
+    for (int i = 0; i < fc3_rows; i++) {
+	for (int j = 0; j < fc3_cols; j++) {
+	    fc3_weights[j * fc3_rows + i] = temp_fc3_weights[i * fc3_cols + j];
+	}
+    }
 
     fclose(ptr);
 }
@@ -47,8 +67,7 @@ void load_mnist_data(float *mnist_data) {
 
     unsigned char* bytes = (unsigned char*) malloc(num_images * image_len * sizeof(unsigned char));
     fseek(ptr, sizeof(int) * 4, SEEK_SET);
-    size_t n1 = fread(bytes, sizeof(unsigned char), num_images * image_len, ptr);
-    size_t n2 = fread(bytes, 1, 1, ptr);
+    fread(bytes, sizeof(unsigned char), num_images * image_len, ptr);
     fclose(ptr);
 
     for (int n = 0; n < num_images; n++) {
@@ -134,13 +153,14 @@ int main(int argc, char *argv[]) {
     float max_output = -1000;
     int msg_freq = 5000;
 
-    for (int n = 0; n < num_images; n++) {
+    int test_size = 60000;
+    for (int n = 0; n < test_size; n++) {
         // Device compute
         fully_connected(d_input_data + n * image_len, n_inputs, d_fc1_weights, d_fc1_biases, d_fc1_activations, n_hidden1);
         relu<<<grid1, threads>>>(d_fc1_activations, n_hidden1);
         fully_connected(d_fc1_activations, n_hidden1, d_fc2_weights, d_fc2_biases, d_fc2_activations, n_hidden2);
         relu<<<grid2, threads>>>(d_fc2_activations, n_hidden2);
-        fully_connected(d_fc2_activations, n_hidden2, d_fc3_weights, d_fc1_biases, d_net_output, n_outputs);
+        fully_connected(d_fc2_activations, n_hidden2, d_fc3_weights, d_fc3_biases, d_net_output, n_outputs);
 
         // Copy network output to host
         cudaMemcpy(net_output, d_net_output, n_outputs * sizeof(float), cudaMemcpyDeviceToHost);
@@ -157,12 +177,12 @@ int main(int argc, char *argv[]) {
         if (pred == labels[n]) 
 	    num_correct++;
 
-        if (n % msg_freq == 0)
-            printf("Done with %d instances.\n", n);
+        if ((n + 1) % msg_freq == 0)
+            printf("Done with %d instances.\n", n + 1);
     }
 
     printf("%d / %d correct.\n", num_correct, num_images);
-    float accuracy = (float)num_correct / num_images;
+    float accuracy = (float)num_correct / test_size;
     printf("Accuracy: %f\n", accuracy);
 
     return 0;
