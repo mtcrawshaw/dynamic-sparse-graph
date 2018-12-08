@@ -39,7 +39,13 @@ void convolution(float *input, int input_width, int input_height, int input_chan
 
 }
 
-__global__ void relu(float *input, int n_inputs) {
+void relu(float *input, int n_inputs) {
+    dim3 threads(BLK_SIZE);
+    dim3 grid((int)ceil((float)n_inputs/BLK_SIZE));
+    relu_kernel<<<grid, threads>>>(input, n_inputs);
+}
+
+__global__ void relu_kernel(float *input, int n_inputs) {
     int index = blockIdx.x * BLK_SIZE + threadIdx.x;
 
     if (index < n_inputs && input[index] < 0) {
