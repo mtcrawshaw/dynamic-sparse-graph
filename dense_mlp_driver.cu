@@ -96,6 +96,28 @@ int main(int argc, char *argv[]) {
     float accuracy = (float)num_correct / test_size;
     printf("Accuracy: %f\n", accuracy);
 
+    // Clean up
+    free(fc1_weights);
+    free(fc1_biases);
+    free(fc2_weights);
+    free(fc2_biases);
+    free(fc3_weights);
+    free(fc3_biases);
+    free(input_data);
+    free(labels);
+    free(net_output);
+
+    cudaFree(d_fc1_weights);
+    cudaFree(d_fc1_biases);
+    cudaFree(d_fc2_weights);
+    cudaFree(d_fc2_biases);
+    cudaFree(d_fc3_weights);
+    cudaFree(d_fc3_biases);
+    cudaFree(d_input_data);
+    cudaFree(d_fc1_activations);
+    cudaFree(d_fc2_activations);
+    cudaFree(d_net_output);
+
     return 0;
 }
 

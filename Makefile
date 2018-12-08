@@ -6,7 +6,7 @@ CC=nvcc
 NVCCFLAGS=--gpu-architecture=compute_60 --gpu-code=sm_60 -O3 -lcublas
 HCC=gcc
 
-mlp_driver: mlp_driver.o network.o utils.o
+dense_mlp_driver: dense_mlp_driver.o network.o utils.o
 	$(CC) $(NVCCFLAGS) $^ -o $@
 
 %.o: %.cu 

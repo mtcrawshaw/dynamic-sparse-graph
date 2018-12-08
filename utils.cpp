@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <fstream>
+#include <math.h>
 
 #include "utils.hpp"
+#include "sparse_representation.hpp"
 
 void print_vector(float *vec, int len) {
     for (int i = 0; i < len; i++) {
@@ -18,6 +20,26 @@ void print_matrix(float *mat, int n_rows, int n_cols) {
         }
         printf("\n");
     }
+}
+
+void print_bsr_matrix(BSR &mat) {
+    printf("Block size: %d\n", mat.block_size);
+    printf("Block rows: %d\n", mat.block_rows);
+    printf("Block cols: %d\n", mat.block_cols);
+    printf("Nnzb: %d\n", mat.nnzb);
+    printf("Values:\n");
+    for (int i = 0; i < mat.nnzb * mat.block_size * mat.block_size; i++) {
+	printf("%f ", mat.values[i]);
+    }
+    printf("\nColumn IDs:\n");
+    for (int i = 0; i < mat.nnzb; i++) {
+	printf("%d ", mat.col_ids[i]);
+    }
+    printf("\nRow indexes:\n");
+    for (int i = 0; i < mat.block_rows + 1; i++) {
+	printf("%d ", mat.row_indx[i]);
+    }
+    printf("\n");
 }
 
 void load_mlp_weights(float *fc1_weights, float *fc1_biases, float *fc2_weights, float *fc2_biases, float *fc3_weights, float *fc3_biases, const char *path) {
@@ -91,4 +113,66 @@ void load_mnist_labels(unsigned char *mnist_labels) {
     fseek(ptr, sizeof(int) * 2, SEEK_SET);
     fread(mnist_labels, sizeof(unsigned char), num_images, ptr);
     fclose(ptr);
+}
+
+
+BSR dense_to_BSR(float *mat, unsigned int nrows, unsigned int ncols, unsigned int block_size) {
+    int nnzb = 0;
+    int block_rows = (int)ceil((float)nrows / block_size);
+    int block_cols = (int)ceil((float)ncols / block_size);
+
+    BSR bsr_mat;
+    float *temp_values = (float*) malloc(block_rows * block_size * block_cols * block_size * sizeof(float));
+    unsigned int *temp_col_ids = (unsigned int*) malloc(block_rows * block_cols * sizeof(unsigned int));
+    bsr_mat.row_indx = (unsigned int*) malloc((block_rows + 1) * sizeof(unsigned int));
+
+    float *block = (float*) malloc(block_size * block_size * sizeof(float));
+    int found_nz = 0;
+    float element = 0;
+    int row = 0;
+    int col = 0;
+
+    for (int b_row = 0; b_row < block_rows; b_row++) {
+        bsr_mat.row_indx[b_row] = nnzb;
+
+	for (int b_col = 0; b_col < block_cols; b_col++) {
+	    found_nz = 0;
+
+            for (int i = 0; i < block_size; i++) {
+                for (int j = 0; j < block_size; j++) {
+                    row = b_row * block_size + i;
+                    col = b_col * block_size + j;
+		    if (row < nrows && col < ncols)
+		    	element = mat[col * nrows + row];
+		    else
+			element = 0;
+
+		    block[i * block_size + j] = element;
+		    if (element != 0) {
+			found_nz = 1;
+		    }
+		}
+            }
+
+            if (found_nz == 1) {
+		std::copy(block, block + block_size * block_size, temp_values + nnzb * block_size * block_size);
+		temp_col_ids[nnzb] = b_col;
+                nnzb += 1;
+            }
+	}
+    }
+
+    bsr_mat.row_indx[block_rows] = nnzb;
+
+    bsr_mat.block_size = block_size;
+    bsr_mat.block_rows = block_rows;
+    bsr_mat.block_cols = block_cols;
+    bsr_mat.nnzb = nnzb;
+    
+    bsr_mat.values = (float*) malloc(nnzb * block_size * block_size * sizeof(float));
+    bsr_mat.col_ids = (unsigned int*) malloc(nnzb * sizeof(unsigned int));
+    std::copy(temp_values, temp_values + nnzb * block_size * block_size, bsr_mat.values);
+    std::copy(temp_col_ids, temp_col_ids + nnzb, bsr_mat.col_ids);
+
+    return bsr_mat;
 }

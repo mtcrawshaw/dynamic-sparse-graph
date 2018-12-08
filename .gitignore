@@ -1,4 +1,4 @@
 data/
-mlp_driver
+dense_mlp_driver
 *.o
 notes.txt
