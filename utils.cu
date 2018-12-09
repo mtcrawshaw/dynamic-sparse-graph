@@ -42,45 +42,80 @@ void print_bsr_matrix(BSR &mat) {
     printf("\n");
 }
 
-void load_mlp_weights(float *fc1_weights, float *fc1_biases, float *fc2_weights, float *fc2_biases, float *fc3_weights, float *fc3_biases, const char *path) {
+MLP load_mlp(const char *path, int n_inputs, int n_hidden1, int n_hidden2, int n_outputs) {
+    float *fc1_weights = (float*) malloc(n_inputs * n_hidden1 * sizeof(float));
+    float *fc1_biases = (float*) malloc(n_hidden1 * sizeof(float));
+    float *fc2_weights = (float*) malloc(n_hidden1 * n_hidden2 * sizeof(float));
+    float *fc2_biases = (float*) malloc(n_hidden2 * sizeof(float));
+    float *fc3_weights = (float*) malloc(n_hidden2 * n_outputs * sizeof(float));
+    float *fc3_biases = (float*) malloc(n_outputs * sizeof(float));
+
     FILE *ptr;
-    ptr = fopen("models/mlp_weights.bin", "rb");
+    ptr = fopen(path, "rb");
 
-    unsigned int fc1_rows = 256;
-    unsigned int fc1_cols = 784;
-    unsigned int fc2_rows = 256;
-    unsigned int fc2_cols = 256;
-    unsigned int fc3_rows = 10;
-    unsigned int fc3_cols = 256;
+    // These temp matrices will hold the weights in column major order, as they are stored
+    float *temp_fc1_weights = (float*) malloc(n_inputs * n_hidden1 * sizeof(float));
+    float *temp_fc2_weights = (float*) malloc(n_hidden1 * n_hidden2 * sizeof(float));
+    float *temp_fc3_weights = (float*) malloc(n_hidden2 * n_outputs * sizeof(float));
 
-    float *temp_fc1_weights = (float*) malloc(fc1_rows * fc1_cols * sizeof(float));
-    float *temp_fc2_weights = (float*) malloc(fc2_rows * fc2_cols * sizeof(float));
-    float *temp_fc3_weights = (float*) malloc(fc3_rows * fc3_cols * sizeof(float));
-
-    fread(temp_fc1_weights, sizeof(float), fc1_rows * fc1_cols, ptr);
-    fread(fc1_biases, sizeof(float), fc1_rows, ptr);
-    fread(temp_fc2_weights, sizeof(float), fc2_rows * fc2_cols, ptr);
-    fread(fc2_biases, sizeof(float), fc2_rows, ptr);
-    fread(temp_fc3_weights, sizeof(float), fc3_rows * fc3_cols, ptr);
-    fread(fc3_biases, sizeof(float), fc3_rows, ptr);
-
-    for (int i = 0; i < fc1_rows; i++) {
-        for (int j = 0; j < fc1_cols; j++) {
-            fc1_weights[j * fc1_rows + i] = temp_fc1_weights[i * fc1_cols + j];
-        }
-    }
-    for (int i = 0; i < fc2_rows; i++) {
-        for (int j = 0; j < fc2_cols; j++) {
-            fc2_weights[j * fc2_rows + i] = temp_fc2_weights[i * fc2_cols + j];
-        }
-    }
-    for (int i = 0; i < fc3_rows; i++) {
-        for (int j = 0; j < fc3_cols; j++) {
-            fc3_weights[j * fc3_rows + i] = temp_fc3_weights[i * fc3_cols + j];
-        }
-    }
+    fread(temp_fc1_weights, sizeof(float), n_inputs * n_hidden1, ptr);
+    fread(fc1_biases, sizeof(float), n_hidden1, ptr);
+    fread(temp_fc2_weights, sizeof(float), n_hidden1 * n_hidden2, ptr);
+    fread(fc2_biases, sizeof(float), n_hidden2, ptr);
+    fread(temp_fc3_weights, sizeof(float), n_hidden2 * n_outputs, ptr);
+    fread(fc3_biases, sizeof(float), n_outputs, ptr);
 
     fclose(ptr);
+
+    // Converting from column major order to row major order
+    for (int i = 0; i < n_hidden1; i++) {
+        for (int j = 0; j < n_inputs; j++) {
+            fc1_weights[j * n_hidden1 + i] = temp_fc1_weights[i * n_inputs + j];
+        }
+    }
+    for (int i = 0; i < n_hidden2; i++) {
+        for (int j = 0; j < n_hidden1; j++) {
+            fc2_weights[j * n_hidden2 + i] = temp_fc2_weights[i * n_hidden1 + j];
+        }
+    }
+    for (int i = 0; i < n_outputs; i++) {
+        for (int j = 0; j < n_hidden2; j++) {
+            fc3_weights[j * n_outputs + i] = temp_fc3_weights[i * n_hidden2 + j];
+        }
+    }
+
+    // Loading weights into MLP struct on device
+    MLP mlp;
+    mlp.n_inputs = n_inputs;
+    mlp.n_hidden1 = n_hidden1;
+    mlp.n_hidden2 = n_hidden2;
+    mlp.n_outputs = n_outputs;
+    cudaMalloc(&mlp.fc1_weights, n_inputs * n_hidden1 * sizeof(float));
+    cudaMalloc(&mlp.fc1_biases, n_hidden1 * sizeof(float));
+    cudaMalloc(&mlp.fc2_weights, n_hidden1 * n_hidden2 * sizeof(float));
+    cudaMalloc(&mlp.fc2_biases, n_hidden2 * sizeof(float));
+    cudaMalloc(&mlp.fc3_weights, n_hidden2 * n_outputs * sizeof(float));
+    cudaMalloc(&mlp.fc3_biases, n_outputs * sizeof(float));
+
+    cudaMemcpy(mlp.fc1_weights, fc1_weights, n_inputs * n_hidden1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(mlp.fc1_biases, fc1_biases, n_hidden1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(mlp.fc2_weights, fc2_weights, n_hidden1 * n_hidden2 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(mlp.fc2_biases, fc2_biases, n_hidden2 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(mlp.fc3_weights, fc3_weights, n_hidden2 * n_outputs * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(mlp.fc3_biases, fc3_biases, n_outputs * sizeof(float), cudaMemcpyHostToDevice); 
+
+    // Clean up
+    free(fc1_weights);
+    free(temp_fc1_weights);
+    free(fc1_biases);
+    free(fc2_weights);
+    free(temp_fc2_weights);
+    free(fc2_biases);
+    free(fc3_weights);
+    free(temp_fc3_weights);
+    free(fc3_biases);
+
+    return mlp;
 }
 
 void load_mnist_data(float *mnist_data) {
@@ -115,6 +150,41 @@ void load_mnist_labels(unsigned char *mnist_labels) {
     fclose(ptr);
 }
 
+// copy_type = 0 means vec is on device and return value will be on device
+// copy_type = 1 means vec is on device and return value will be on host
+/*__global__ void device_dense_to_SparseVector(float *vec, unsigned int len, float *values, unsigned int *indices, int *nnz, unsigned int copy_type) {
+    nnz = 0;
+
+    for (int i = 0; i < len; i++) {
+	if (vec[i] != 0) {
+	    values[nnz] = vec[i];
+	    indices[nnz] = i;
+	    nnz += 1;
+	}
+    }
+
+    float *s_vec.values;
+    unsigned int *s_vec.indices;
+    cudaMalloc(&s_vec.values, nnz * sizeof(float));
+    cudaMalloc(&s_vec.indices, nnz * sizeof(unsigned int));
+
+    cudaMemcpyKind copy_kind;
+    if (copy_type == 0)
+	copy_kind = cudaMemcpyDeviceToDevice;
+    else if (copy_type == 1)
+	copy_kind = cudaMemcpyDeviceToHost;
+
+    cudaMemcpy(s_vec.values, temp_values, nnz * sizeof(float), copy_kind);
+    cudaMemcpy(s_vec.indices, temp_indices, nnz * sizeof(unsigned int), copy_kind);
+
+    free(temp_values);
+    free(temp_indices);
+
+    return s_vec;
+}*/
+
+// copy_type = 0 means vec is on host and return value will be on host
+// copy_type = 1 means vec is on host and return value will be on device
 SparseVector dense_to_SparseVector(float *vec, unsigned int len, unsigned int copy_type) {
     float *temp_values = (float*) malloc(len * sizeof(float));
     unsigned int *temp_indices = (unsigned int*) malloc(len * sizeof(unsigned int));

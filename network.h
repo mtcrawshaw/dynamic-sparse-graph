@@ -3,6 +3,21 @@
 
 #include "sparse_representation.hpp"
 
+struct MLP
+{
+    float *fc1_weights{};
+    float *fc1_biases{};
+    float *fc2_weights{};
+    float *fc2_biases{};
+    float *fc3_weights{};
+    float *fc3_biases{};
+
+    unsigned int n_inputs{};
+    unsigned int n_hidden1{};
+    unsigned int n_hidden2{};
+    unsigned int n_outputs{};
+};
+
 void sparse_fully_connected(float *input_values, unsigned int *input_indices, unsigned int input_nnz, float *weights, float *biases, float *output, int n_outputs);
 __global__ void sparse_fully_connected_kernel(float *input_values, unsigned int *input_indices, unsigned int input_nnz, float *weights, float *biases, float *output, int n_outputs);
 void fully_connected(float *input, int n_inputs, float *weights, float *biases, float *output, int n_outputs);
