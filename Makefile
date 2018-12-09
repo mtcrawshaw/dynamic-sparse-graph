@@ -8,6 +8,8 @@ HCC=gcc
 
 dense_mlp_driver: dense_mlp_driver.o network.o utils.o
 	$(CC) $(NVCCFLAGS) $^ -o $@
+sparse_mlp_driver: sparse_mlp_driver.o network.o utils.o
+	$(CC) $(NVCCFLAGS) $^ -o $@
 
 %.o: %.cu 
 	$(CC) $(NVCCFLAGS) -c $< -o $@

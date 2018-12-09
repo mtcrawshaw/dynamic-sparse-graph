@@ -2,7 +2,7 @@
 #include <fstream>
 #include <math.h>
 
-#include "utils.hpp"
+#include "utils.h"
 #include "sparse_representation.hpp"
 
 void print_vector(float *vec, int len) {
@@ -115,6 +115,39 @@ void load_mnist_labels(unsigned char *mnist_labels) {
     fclose(ptr);
 }
 
+SparseVector dense_to_SparseVector(float *vec, unsigned int len, unsigned int copy_type) {
+    float *temp_values = (float*) malloc(len * sizeof(float));
+    unsigned int *temp_indices = (unsigned int*) malloc(len * sizeof(unsigned int));
+    unsigned int nnz = 0;
+
+    for (int i = 0; i < len; i++) {
+	if (vec[i] != 0) {
+	    temp_values[nnz] = vec[i];
+	    temp_indices[nnz] = i;
+	    nnz += 1;
+	}
+    }
+
+    SparseVector s_vec;
+
+    s_vec.nnz = nnz;
+    if (copy_type == 0) {
+        s_vec.values = (float*) malloc(nnz * sizeof(float));
+        s_vec.indices = (unsigned int*) malloc(nnz * sizeof(unsigned int));
+        std::copy(temp_values, temp_values + nnz, s_vec.values);
+        std::copy(temp_indices, temp_indices + nnz, s_vec.indices);
+    } else {
+	cudaMalloc(&s_vec.values, nnz * sizeof(float));
+        cudaMalloc(&s_vec.indices, nnz * sizeof(unsigned int));
+        cudaMemcpy(s_vec.values, temp_values, nnz * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(s_vec.indices, temp_indices, nnz * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    }
+
+    free(temp_values);
+    free(temp_indices);
+
+    return s_vec;
+}
 
 BSR dense_to_BSR(float *mat, unsigned int nrows, unsigned int ncols, unsigned int block_size) {
     int nnzb = 0;

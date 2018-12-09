@@ -1,6 +1,10 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#include "sparse_representation.hpp"
+
+void sparse_fully_connected(float *input_values, unsigned int *input_indices, unsigned int input_nnz, float *weights, float *biases, float *output, int n_outputs);
+__global__ void sparse_fully_connected_kernel(float *input_values, unsigned int *input_indices, unsigned int input_nnz, float *weights, float *biases, float *output, int n_outputs);
 void fully_connected(float *input, int n_inputs, float *weights, float *biases, float *output, int n_outputs);
 void convolution(float *input, int input_width, int input_height, int input_channels, float *weights, int filter_size, int num_filters, float *output, int stride, int padding);
 

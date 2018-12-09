@@ -35,6 +35,27 @@ void fully_connected(float *input, int n_inputs, float *weights, float *biases, 
     cublasDestroy(handle);
 }
 
+void sparse_fully_connected(float *input_values, unsigned int *input_indices, unsigned int input_nnz, float *weights, float *biases, float *output, int n_outputs) {
+    dim3 threads(BLK_SIZE);
+    dim3 grid((int)ceil((float)n_outputs/BLK_SIZE));
+    sparse_fully_connected_kernel<<<grid, threads>>>(input_values, input_indices, input_nnz, weights, biases, output, n_outputs);
+}
+
+__global__ void sparse_fully_connected_kernel(float *input_values, unsigned int *input_indices, unsigned int input_nnz, float *weights, float *biases, float *output, int n_outputs) {
+    unsigned int index = blockIdx.x * BLK_SIZE + threadIdx.x;
+    unsigned int element_index;
+
+    if (index < n_outputs) {
+	float ans = 0;
+	for (int i = 0; i < input_nnz; i++) {
+	    element_index = input_indices[i];
+	    ans += input_values[i] * weights[element_index * n_outputs + index];
+        }
+
+	output[index] = ans + biases[index];
+    }
+}
+
 void convolution(float *input, int input_width, int input_height, int input_channels, float *weights, int filter_size, int num_filters, float *output, int stride, int padding) {
 
 }

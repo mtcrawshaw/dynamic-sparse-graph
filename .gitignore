@@ -1,4 +1,5 @@
 data/
 dense_mlp_driver
+sparse_mlp_driver
 *.o
 notes.txt
