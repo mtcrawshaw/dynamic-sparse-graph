@@ -3,7 +3,7 @@
 #
 
 CC=nvcc
-NVCCFLAGS=--gpu-architecture=compute_60 --gpu-code=sm_60 -O3 -lcublas
+NVCCFLAGS=--gpu-architecture=compute_60 --gpu-code=sm_60 -O3 -lcublas -lcusparse
 HCC=gcc
 
 mlp_driver: mlp_driver.o network.o utils.o

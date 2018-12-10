@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <fstream>
 #include <math.h>
+#include <time.h>
 
 #include "utils.h"
 #include "sparse_representation.hpp"
@@ -39,6 +40,32 @@ void print_bsr_matrix(BSR &mat) {
     for (int i = 0; i < mat.block_rows + 1; i++) {
 	printf("%d ", mat.row_indx[i]);
     }
+    printf("\n");
+}
+
+void print_csr_matrix(CSR &mat) {
+    printf("Nrows: %d\n", mat.nrows);
+    printf("Ncols: %d\n", mat.ncols);
+    printf("Nnz: %d\n", mat.nnz);
+    printf("Values:\n");
+    for (int i = 0; i < mat.nnz; i++)
+        printf("%f ", mat.values[i]);
+    printf("\nCol IDs:\n");
+    for (int i = 0; i < mat.nnz; i++)
+        printf("%d ", mat.col_ids[i]);
+    printf("\nRow indexes:\n");
+    for (int i = 0; i < mat.nrows + 1; i++)
+        printf("%d ", mat.row_indx[i]);
+    printf("\n");
+}
+
+void print_sparse_vector(SparseVector vec) {
+    printf("Values:\n");
+    for (int i = 0; i < vec.nnz; i++)
+	printf("%f ", vec.values[i]);
+    printf("\nIndices\n");
+    for (int i = 0; i < vec.nnz; i++)
+	printf("%d ", vec.indices[i]);
     printf("\n");
 }
 
@@ -203,7 +230,7 @@ SparseVector dense_to_SparseVector(float *vec, unsigned int len, unsigned int co
     s_vec.nnz = nnz;
     if (copy_type == 0) {
         s_vec.values = (float*) malloc(nnz * sizeof(float));
-        s_vec.indices = (unsigned int*) malloc(nnz * sizeof(unsigned int));
+        s_vec.indices = (int*) malloc(nnz * sizeof(int));
         std::copy(temp_values, temp_values + nnz, s_vec.values);
         std::copy(temp_indices, temp_indices + nnz, s_vec.indices);
     } else {
@@ -217,6 +244,46 @@ SparseVector dense_to_SparseVector(float *vec, unsigned int len, unsigned int co
     free(temp_indices);
 
     return s_vec;
+}
+
+CSR get_random_projection(unsigned int nrows, unsigned int ncols, float s) {
+    CSR projection;
+    projection.nrows = nrows;
+    projection.ncols = ncols;
+
+    float* temp_values = (float*) malloc(nrows * ncols * sizeof(float));
+    int* temp_col_ids = (int*) malloc(nrows * ncols * sizeof(int));
+    projection.row_indx = (int*) malloc((nrows + 1) * sizeof(int));
+    unsigned int nnz = 0;
+    
+    float random = 0;
+    float base = 2 * s;
+    srand(time(0));
+
+    for (int i = 0; i < nrows; i++) {
+	projection.row_indx[i] = nnz;
+
+	for (int j = 0; j < ncols; j++) {
+	    random = (float)rand() / (float)(RAND_MAX);
+	    if (random <= 1.0 / s)  {
+		temp_col_ids[nnz] = j;
+		if (random <= 1.0 / base)
+		    temp_values[nnz] = sqrt(s);
+		else
+		    temp_values[nnz] = -1 * sqrt(s);
+		nnz += 1;
+            }
+        }
+    }
+    projection.row_indx[nrows] = nnz;
+
+    projection.nnz = nnz;
+    projection.values = (float*) malloc(nnz * sizeof(float));
+    projection.col_ids = (int*) malloc(nnz * sizeof(int));
+    std::copy(temp_values, temp_values + nnz, projection.values);
+    std::copy(temp_col_ids, temp_col_ids + nnz, projection.col_ids);
+
+    return projection;
 }
 
 BSR dense_to_BSR(float *mat, unsigned int nrows, unsigned int ncols, unsigned int block_size) {
