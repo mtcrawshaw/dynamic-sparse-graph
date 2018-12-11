@@ -1,11 +1,14 @@
 #include <iostream>
+#include <math.h>
+#include <float.h>
+
 #include <cuda_runtime.h>
 #include "cublas_v2.h"
 #include "cusparse.h"
 
 #include "network.h"
 
-const int BLK_SIZE = 1024;
+const int BLK_SIZE = 64;
 
 const char* cublasGetErrorString(cublasStatus_t status) {
     switch(status)
@@ -38,15 +41,14 @@ const char* cusparseGetErrorString(cusparseStatus_t status) {
 }
 
 void fully_connected(float *input, int n_inputs, float *weights, float *biases, float *output, int n_outputs) {
-    cublasStatus_t stat;
     cublasHandle_t handle;
-    stat = cublasCreate(&handle);
+    cublasCreate(&handle);
 
     // Device compute
     float alpha = 1.0;
     float beta = 1.0;
     cudaMemcpy(output, biases, n_outputs * sizeof(float), cudaMemcpyDeviceToDevice);
-    stat = cublasSgemv(handle, CUBLAS_OP_N, n_outputs, n_inputs, &alpha, weights, n_outputs, input, 1, &beta, output, 1);
+    cublasSgemv(handle, CUBLAS_OP_N, n_outputs, n_inputs, &alpha, weights, n_outputs, input, 1, &beta, output, 1);
 
     cublasDestroy(handle);
 }
@@ -94,8 +96,8 @@ void dsg_fully_connected(SparseVector input, float *weights, float *biases, floa
     float *reduced_input;
     cudaMalloc(&reduced_input, projection.nrows * sizeof(float));
     dim3 threads(BLK_SIZE);
-    dim3 grid((int)ceil((float)projection.nrows/BLK_SIZE));
-    spm_spv<<<grid, threads>>>(projection.values, projection.col_ids, projection.row_indx, input.values, input.indices, input.nnz, reduced_input, projection.nrows, alpha);
+    dim3 grid_spm_spv((int)ceil((float)projection.nrows/BLK_SIZE));
+    spm_spv<<<grid_spm_spv, threads>>>(projection.values, projection.col_ids, projection.row_indx, input.values, input.indices, input.nnz, reduced_input, projection.nrows, alpha);
 
     // Multiply reduced weight with reduced vector
     alpha = 1.0;
@@ -105,11 +107,19 @@ void dsg_fully_connected(SparseVector input, float *weights, float *biases, floa
     cudaMemcpy(reduced_product, biases, n_outputs * sizeof(float), cudaMemcpyDeviceToDevice);
     cublasSgemv(dense_handle, CUBLAS_OP_T, n_outputs, projection.nrows, &alpha, reduced_weights, n_outputs, reduced_input, 1, &beta, reduced_product, 1);
     cublasDestroy(dense_handle);
-    
-    // Top k search to find output units with large approximate activation
-    int K = (int)ceil(n_outputs * (1.0 - sparsity));
-    int *top_indices = (int*) malloc(K * sizeof(int));
-    
+
+    // Use cosine heuristic to estimate threshold for top values
+    float *reduced_min, *reduced_max;
+    cudaMalloc((void**)&reduced_min, sizeof(float));
+    cudaMalloc((void**)&reduced_max, sizeof(float));
+    dim3 grid_min_max((int)ceil((float)n_outputs/BLK_SIZE));
+    max_reduce<<<grid_min_max, threads, 1>>>(reduced_product, n_outputs, reduced_max);
+    min_reduce<<<grid_min_max, threads, 1>>>(reduced_product, n_outputs, reduced_min);
+
+    // Filter activations that are less than threshold
+    // threshold is calculated as (*reduced_max + *reduced_min) / 2.0 + (*reduced_max - *reduced_min) / M_PI * asinf(1 - 2 * sparsity);
+   
+    // Add freeing stuff up here 
 }
 
 __global__ void spm_spv(float *mat_values, int *mat_col_ids, int *mat_row_indx, float *vec_values, int *vec_indices, int vec_nnz, float *output, int output_len, float alpha) {
@@ -141,6 +151,71 @@ __global__ void spm_spv(float *mat_values, int *mat_col_ids, int *mat_row_indx, 
 
         output[index] = ans * alpha;
     }
+}
+
+__device__ float atomicMaxf(float *address, float val) {
+    int *address_as_int = (int*) address;
+    int old = *address_as_int, assumed;
+    do {
+	assumed = old;
+        old = atomicCAS(address_as_int, assumed, __float_as_int(fmaxf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+    return __int_as_float(old);
+}
+__device__ float atomicMinf(float *address, float val) {
+    int *address_as_int = (int*) address;
+    int old = *address_as_int, assumed;
+    do {
+	assumed = old;
+        old = atomicCAS(address_as_int, assumed, __float_as_int(fminf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+    return __int_as_float(old);
+}
+
+__global__ void max_reduce(float *values, int num_elements, float *max) {
+    extern __shared__ float shared_max[];
+
+    int tid = threadIdx.x;
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid == 0)
+	*max = -FLT_MAX;
+
+    shared_max[tid] = -FLT_MAX;
+    if (gid < num_elements) 
+	shared_max[tid] = values[gid];
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+	if (tid < s && gid < num_elements) 
+	    shared_max[tid] = fmaxf(shared_max[tid], shared_max[tid + s]);
+	__syncthreads();
+    }
+
+    if (tid == 0) 
+	atomicMaxf(max, shared_max[0]);
+}
+
+__global__ void min_reduce(float *values, int num_elements, float *min) {
+    extern __shared__ float shared_min[];
+
+    int tid = threadIdx.x;
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid == 0)
+	*min = FLT_MAX;
+
+    shared_min[tid] = FLT_MAX;
+    if (gid < num_elements) 
+	shared_min[tid] = values[gid];
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+	if (tid < s && gid < num_elements) 
+	    shared_min[tid] = fminf(shared_min[tid], shared_min[tid + s]);
+	__syncthreads();
+    }
+
+    if (tid == 0) 
+	atomicMinf(min, shared_min[0]);
 }
 
 void relu(float *input, int n_inputs) {

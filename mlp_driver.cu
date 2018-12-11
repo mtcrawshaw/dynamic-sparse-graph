@@ -1,5 +1,7 @@
 #include <iostream>
 #include <fstream>
+#include <math.h>
+#include <time.h>
 
 #include "network.h"
 #include "utils.h"
@@ -248,6 +250,9 @@ int main(int argc, char *argv[]) {
     // Clean up
     free(input_data);
     free(labels);
+    free(projection.values);
+    free(projection.col_ids);
+    free(projection.row_indx);
 
     cudaFree(mlp.fc1_weights);
     cudaFree(mlp.fc1_biases);
