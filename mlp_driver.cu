@@ -2,6 +2,11 @@
 #include <fstream>
 #include <math.h>
 #include <time.h>
+#include <float.h>
+
+#include <cuda_runtime.h>
+#include "cublas_v2.h"
+#include "cusparse.h"
 
 #include "network.h"
 #include "utils.h"
@@ -152,41 +157,40 @@ float sparse_infer(MLP mlp, float *input_data, unsigned char* labels) {
     return (float)num_correct / test_size;
 }
 
-float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, CSR projection, float sparsity) {
+float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsity) {
     printf("Starting dsg inference...\n");
 
-    // Declare network activations
+    // Declare network activations and output
     SparseVector s_input, s_fc1_activations, s_fc2_activations;
-    float *d_fc1_activations, *d_fc2_activations, *d_net_output;
-    cudaMalloc(&d_fc1_activations, n_hidden1 * sizeof(float));
-    cudaMalloc(&d_fc2_activations, n_hidden2 * sizeof(float));
+    float *net_output = (float*) malloc(n_outputs * sizeof(float));
+    float *d_net_output;
     cudaMalloc(&d_net_output, n_outputs * sizeof(float));
 
-    float *net_output = (float*) malloc(n_outputs * sizeof(float));
     int num_correct = 0;
     unsigned char pred = 0;
-    float max_output = -1000;
+    float max_output = -FLT_MAX;
 
-    float *temp_fc1_activations = (float*) malloc(n_hidden1 * sizeof(float));
-    float *temp_fc2_activations = (float*) malloc(n_hidden2 * sizeof(float));
+    // Generate linear projections for each layer
+    CSR projection1 = get_random_projection(150, n_inputs, 3, 1);
+    CSR projection2 = get_random_projection(50, n_hidden1, 3, 1);
 
     int test_size = 60000;
+
+    struct SparseVector inputs[test_size];
     for (int n = 0; n < test_size; n++) {
+	inputs[n] = dense_to_SparseVector(input_data + n * image_len, image_len, 1);
+    }
+
+    for (int n = 0; n < test_size; n++) {
+
         // Copy network input to gpu
-        s_input = dense_to_SparseVector(input_data + n * image_len, image_len, 1);
+        //s_input = dense_to_SparseVector(input_data + n * image_len, image_len, 1);
 
         // Device compute
-        dsg_fully_connected(s_input, mlp.fc1_weights, mlp.fc1_biases, d_fc1_activations, n_hidden1, projection, sparsity);
-        break;
-        /*cudaMemcpy(temp_fc1_activations, d_fc1_activations, n_hidden1 * sizeof(float), cudaMemcpyDeviceToHost);
-        s_fc1_activations = dense_to_SparseVector(temp_fc1_activations, n_hidden1, 1);
+        s_fc1_activations = dsg_fully_connected(inputs[n], mlp.fc1_weights, mlp.fc1_biases, n_hidden1, projection1, sparsity);
         relu(s_fc1_activations.values, s_fc1_activations.nnz);
-
-        sparse_fully_connected(s_fc1_activations, mlp.fc2_weights, mlp.fc2_biases, d_fc2_activations, n_hidden2);
-        cudaMemcpy(temp_fc2_activations, d_fc2_activations, n_hidden2 * sizeof(float), cudaMemcpyDeviceToHost);
-        s_fc2_activations = dense_to_SparseVector(temp_fc2_activations, n_hidden2, 1);
+        s_fc2_activations = dsg_fully_connected(s_fc1_activations, mlp.fc2_weights, mlp.fc2_biases, n_hidden2, projection2, sparsity);
         relu(s_fc2_activations.values, s_fc2_activations.nnz);
-
         sparse_fully_connected(s_fc2_activations, mlp.fc3_weights, mlp.fc3_biases, d_net_output, n_outputs);
 
         // Copy network output to host
@@ -206,20 +210,21 @@ float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, CSR projectio
             num_correct++;
 
         if ((n + 1) % msg_freq == 0)
-            printf("Done with %d instances.\n", n + 1);*/
+            printf("Done with %d instances.\n", n + 1);
     }
 
     // Clean up
     free(net_output);
-    cudaFree(d_fc1_activations);
-    cudaFree(d_fc2_activations);
-    cudaFree(d_net_output);
     cudaFree(s_input.values);
     cudaFree(s_input.indices);
     cudaFree(s_fc1_activations.values);
     cudaFree(s_fc1_activations.indices);
-    cudaFree(s_fc2_activations.values);
-    cudaFree(s_fc2_activations.indices);
+    cudaFree(projection1.values);
+    cudaFree(projection1.col_ids);
+    cudaFree(projection1.row_indx);
+    cudaFree(projection2.values);
+    cudaFree(projection2.col_ids);
+    cudaFree(projection2.row_indx);
 
     printf("Finished dsg inference.\n");
 
@@ -239,20 +244,16 @@ int main(int argc, char *argv[]) {
     unsigned char *labels = (unsigned char*) malloc(num_images * sizeof(unsigned char));
     load_mnist_labels(labels);
 
-    float dense_accuracy = dense_infer(mlp, input_data, labels);
-    printf("Dense accuracy: %f\n\n", dense_accuracy);
-    float sparse_accuracy = sparse_infer(mlp, input_data, labels);
-    printf("Sparse accuracy: %f\n\n", sparse_accuracy);
-    
-    CSR projection = get_random_projection(4, n_inputs, 3);
-    float dsg_accuracy = dsg_infer(mlp, input_data, labels, projection, sparsity);
+    //float dense_accuracy = dense_infer(mlp, input_data, labels);
+    //printf("Dense accuracy: %f\n\n", dense_accuracy);
+    //float sparse_accuracy = sparse_infer(mlp, input_data, labels);
+    //printf("Sparse accuracy: %f\n\n", sparse_accuracy);
+    float dsg_accuracy = dsg_infer(mlp, input_data, labels, sparsity);
+    printf("DSG accuracy: %f\n\n", dsg_accuracy);
 
     // Clean up
     free(input_data);
     free(labels);
-    free(projection.values);
-    free(projection.col_ids);
-    free(projection.row_indx);
 
     cudaFree(mlp.fc1_weights);
     cudaFree(mlp.fc1_biases);

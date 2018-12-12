@@ -6,6 +6,12 @@
 #include "utils.h"
 #include "sparse_representation.hpp"
 
+void cudaCheckErr(const char *file, int line) {
+    cudaError err = cudaGetLastError();
+    if (err != cudaSuccess)
+	printf("cudaCheckError() failed at %s:%i: %s\n", file, line, cudaGetErrorString(err));
+}
+
 void print_vector(float *vec, int len) {
     for (int i = 0; i < len; i++) {
         printf("%f ", vec[i]);
@@ -246,14 +252,14 @@ SparseVector dense_to_SparseVector(float *vec, unsigned int len, unsigned int co
     return s_vec;
 }
 
-CSR get_random_projection(unsigned int nrows, unsigned int ncols, float s) {
+CSR get_random_projection(unsigned int nrows, unsigned int ncols, float s, unsigned int gpu) {
     CSR projection;
     projection.nrows = nrows;
     projection.ncols = ncols;
 
     float* temp_values = (float*) malloc(nrows * ncols * sizeof(float));
     int* temp_col_ids = (int*) malloc(nrows * ncols * sizeof(int));
-    projection.row_indx = (int*) malloc((nrows + 1) * sizeof(int));
+    int* temp_row_indx = (int*) malloc((nrows + 1) * sizeof(int));
     unsigned int nnz = 0;
     
     float random = 0;
@@ -261,7 +267,7 @@ CSR get_random_projection(unsigned int nrows, unsigned int ncols, float s) {
     srand(time(0));
 
     for (int i = 0; i < nrows; i++) {
-	projection.row_indx[i] = nnz;
+	temp_row_indx[i] = nnz;
 
 	for (int j = 0; j < ncols; j++) {
 	    random = (float)rand() / (float)(RAND_MAX);
@@ -275,13 +281,24 @@ CSR get_random_projection(unsigned int nrows, unsigned int ncols, float s) {
             }
         }
     }
-    projection.row_indx[nrows] = nnz;
+    temp_row_indx[nrows] = nnz;
 
     projection.nnz = nnz;
-    projection.values = (float*) malloc(nnz * sizeof(float));
-    projection.col_ids = (int*) malloc(nnz * sizeof(int));
-    std::copy(temp_values, temp_values + nnz, projection.values);
-    std::copy(temp_col_ids, temp_col_ids + nnz, projection.col_ids);
+    if (gpu == 0) {
+        projection.values = (float*) malloc(nnz * sizeof(float));
+        projection.col_ids = (int*) malloc(nnz * sizeof(int));
+        projection.row_indx = (int*) malloc((nrows + 1) * sizeof(int));
+        std::copy(temp_values, temp_values + nnz, projection.values);
+        std::copy(temp_col_ids, temp_col_ids + nnz, projection.col_ids);
+        std::copy(temp_row_indx, temp_row_indx + nrows + 1, projection.row_indx);
+    } else {
+        cudaMalloc(&projection.values, nnz * sizeof(float));
+        cudaMalloc(&projection.col_ids, nnz * sizeof(int));
+        cudaMalloc(&projection.row_indx, (nrows + 1) * sizeof(int));
+        cudaMemcpy(projection.values, temp_values, nnz * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(projection.col_ids, temp_col_ids, nnz * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(projection.row_indx, temp_row_indx, (nrows + 1) * sizeof(int), cudaMemcpyHostToDevice);
+    }
 
     return projection;
 }
