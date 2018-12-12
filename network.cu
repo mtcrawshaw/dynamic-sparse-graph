@@ -11,52 +11,6 @@
 
 const int BLK_SIZE = 64;
 
-const char* cublasGetErrorString(cublasStatus_t status) {
-    switch(status)
-    {
-	case CUBLAS_STATUS_SUCCESS: return "CUBLAS_STATUS_SUCCESS";
-        case CUBLAS_STATUS_NOT_INITIALIZED: return "CUBLAS_STATUS_NOT_INITIALIZED";
-        case CUBLAS_STATUS_ALLOC_FAILED: return "CUBLAS_STATUS_ALLOC_FAILED";
-        case CUBLAS_STATUS_INVALID_VALUE: return "CUBLAS_STATUS_INVALID_VALUE";
-        case CUBLAS_STATUS_ARCH_MISMATCH: return "CUBLAS_STATUS_ARCH_MISMATCH";
-        case CUBLAS_STATUS_MAPPING_ERROR: return "CUBLAS_STATUS_MAPPING_ERROR";
-        case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED";
-        case CUBLAS_STATUS_INTERNAL_ERROR: return "CUBLAS_STATUS_INTERNAL_ERROR";
-    }
-    return "unknown error";
-}
-
-const char* cusparseGetErrorString(cusparseStatus_t status) {
-    switch(status)
-    {
-	case CUSPARSE_STATUS_SUCCESS: return "CUSPARSE_STATUS_SUCCESS";
-        case CUSPARSE_STATUS_NOT_INITIALIZED: return "CUSPARSE_STATUS_NOT_INITIALIZED";
-        case CUSPARSE_STATUS_ALLOC_FAILED: return "CUSPARSE_STATUS_ALLOC_FAILED";
-        case CUSPARSE_STATUS_INVALID_VALUE: return "CUSPARSE_STATUS_INVALID_VALUE";
-        case CUSPARSE_STATUS_ARCH_MISMATCH: return "CUSPARSE_STATUS_ARCH_MISMATCH";
-        case CUSPARSE_STATUS_MAPPING_ERROR: return "CUSPARSE_STATUS_MAPPING_ERROR";
-        case CUSPARSE_STATUS_EXECUTION_FAILED: return "CUSPARSE_STATUS_EXECUTION_FAILED";
-        case CUSPARSE_STATUS_INTERNAL_ERROR: return "CUSPARSE_STATUS_INTERNAL_ERROR";
-    }
-    return "unknown error";
-}
-
-void checkCusparseError(cusparseStatus_t stat) {
-    if (stat != CUSPARSE_STATUS_SUCCESS) {
-	printf("Error: ");
-	printf(cusparseGetErrorString(stat));
-        printf("\n");
-    }
-}
-
-void checkCublasError(cublasStatus_t stat) {
-    if (stat != CUBLAS_STATUS_SUCCESS) {
-	printf("Error: ");
-	printf(cublasGetErrorString(stat));
-        printf("\n");
-    }
-}
-
 void fully_connected(float *input, int n_inputs, float *weights, float *biases, float *output, int n_outputs) {
     cublasHandle_t handle;
     cublasCreate(&handle);

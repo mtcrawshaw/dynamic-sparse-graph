@@ -4,7 +4,9 @@
 #include "network.h"
 #include "sparse_representation.hpp"
 
-void cudaCheckErr(const char *file, int line);
+void cudaCheckErr();
+void cublasCheckError(cublasStatus_t stat);
+void cusparseCheckError(cusparseStatus_t stat);
 
 void print_vector(float *vec, int len);
 void print_matrix(float *mat, int n_rows, int ncols);

@@ -6,10 +6,56 @@
 #include "utils.h"
 #include "sparse_representation.hpp"
 
-void cudaCheckErr(const char *file, int line) {
+const char* cublasGetErrorString(cublasStatus_t status) {
+    switch(status)
+    {
+        case CUBLAS_STATUS_SUCCESS: return "CUBLAS_STATUS_SUCCESS";
+        case CUBLAS_STATUS_NOT_INITIALIZED: return "CUBLAS_STATUS_NOT_INITIALIZED";
+        case CUBLAS_STATUS_ALLOC_FAILED: return "CUBLAS_STATUS_ALLOC_FAILED";
+        case CUBLAS_STATUS_INVALID_VALUE: return "CUBLAS_STATUS_INVALID_VALUE";
+        case CUBLAS_STATUS_ARCH_MISMATCH: return "CUBLAS_STATUS_ARCH_MISMATCH";
+        case CUBLAS_STATUS_MAPPING_ERROR: return "CUBLAS_STATUS_MAPPING_ERROR";
+        case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED";
+        case CUBLAS_STATUS_INTERNAL_ERROR: return "CUBLAS_STATUS_INTERNAL_ERROR";
+    }
+    return "unknown error";
+}
+
+const char* cusparseGetErrorString(cusparseStatus_t status) {
+    switch(status)
+    {
+        case CUSPARSE_STATUS_SUCCESS: return "CUSPARSE_STATUS_SUCCESS";
+        case CUSPARSE_STATUS_NOT_INITIALIZED: return "CUSPARSE_STATUS_NOT_INITIALIZED";
+        case CUSPARSE_STATUS_ALLOC_FAILED: return "CUSPARSE_STATUS_ALLOC_FAILED";
+        case CUSPARSE_STATUS_INVALID_VALUE: return "CUSPARSE_STATUS_INVALID_VALUE";
+        case CUSPARSE_STATUS_ARCH_MISMATCH: return "CUSPARSE_STATUS_ARCH_MISMATCH";
+        case CUSPARSE_STATUS_MAPPING_ERROR: return "CUSPARSE_STATUS_MAPPING_ERROR";
+        case CUSPARSE_STATUS_EXECUTION_FAILED: return "CUSPARSE_STATUS_EXECUTION_FAILED";
+        case CUSPARSE_STATUS_INTERNAL_ERROR: return "CUSPARSE_STATUS_INTERNAL_ERROR";
+    }
+    return "unknown error";
+}
+
+void cudaCheckErr() {
     cudaError err = cudaGetLastError();
     if (err != cudaSuccess)
-	printf("cudaCheckError() failed at %s:%i: %s\n", file, line, cudaGetErrorString(err));
+	printf("cudaCheckError() failed with status: %s", cudaGetErrorString(err));
+}
+
+void checkCusparseError(cusparseStatus_t stat) {
+    if (stat != CUSPARSE_STATUS_SUCCESS) {
+        printf("Error: ");
+        printf(cusparseGetErrorString(stat));
+        printf("\n");
+    }
+}
+
+void checkCublasError(cublasStatus_t stat) {
+    if (stat != CUBLAS_STATUS_SUCCESS) {
+        printf("Error: ");
+        printf(cublasGetErrorString(stat));
+        printf("\n");
+    }
 }
 
 void print_vector(float *vec, int len) {
@@ -183,41 +229,6 @@ void load_mnist_labels(unsigned char *mnist_labels) {
     fclose(ptr);
 }
 
-// copy_type = 0 means vec is on device and return value will be on device
-// copy_type = 1 means vec is on device and return value will be on host
-/*__global__ void device_dense_to_SparseVector(float *vec, unsigned int len, float *values, unsigned int *indices, int *nnz, unsigned int copy_type) {
-    nnz = 0;
-
-    for (int i = 0; i < len; i++) {
-	if (vec[i] != 0) {
-	    values[nnz] = vec[i];
-	    indices[nnz] = i;
-	    nnz += 1;
-	}
-    }
-
-    float *s_vec.values;
-    unsigned int *s_vec.indices;
-    cudaMalloc(&s_vec.values, nnz * sizeof(float));
-    cudaMalloc(&s_vec.indices, nnz * sizeof(unsigned int));
-
-    cudaMemcpyKind copy_kind;
-    if (copy_type == 0)
-	copy_kind = cudaMemcpyDeviceToDevice;
-    else if (copy_type == 1)
-	copy_kind = cudaMemcpyDeviceToHost;
-
-    cudaMemcpy(s_vec.values, temp_values, nnz * sizeof(float), copy_kind);
-    cudaMemcpy(s_vec.indices, temp_indices, nnz * sizeof(unsigned int), copy_kind);
-
-    free(temp_values);
-    free(temp_indices);
-
-    return s_vec;
-}*/
-
-// copy_type = 0 means vec is on host and return value will be on host
-// copy_type = 1 means vec is on host and return value will be on device
 SparseVector dense_to_SparseVector(float *vec, unsigned int len, unsigned int copy_type) {
     float *temp_values = (float*) malloc(len * sizeof(float));
     unsigned int *temp_indices = (unsigned int*) malloc(len * sizeof(unsigned int));

@@ -21,9 +21,6 @@ struct MLP
     unsigned int n_outputs{};
 };
 
-void checkCublasError(cublasStatus_t stat);
-void checkCusparseError(cusparseStatus_t stat);
-
 void fully_connected(float *input, int n_inputs, float *weights, float *biases, float *output, int n_outputs);
 void sparse_fully_connected(SparseVector input, float *weights, float *biases, float *output, int n_outputs);
 __global__ void sparse_fully_connected_kernel(float *input_values, int *input_indices, unsigned int input_nnz, float *weights, float *biases, float *output, int n_outputs);
