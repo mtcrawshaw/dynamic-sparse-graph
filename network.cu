@@ -9,7 +9,7 @@
 #include "network.h"
 #include "utils.h"
 
-const int BLK_SIZE = 64;
+const int BLK_SIZE = 128;
 
 void fully_connected(float *input, int n_inputs, float *weights, float *biases, float *output, int n_outputs) {
     cublasHandle_t handle;
@@ -68,8 +68,9 @@ SparseVector dsg_fully_connected(SparseVector input, float *weights, float *bias
     cudaMalloc(&reduced_input, projection.nrows * sizeof(float));
     dim3 threads(BLK_SIZE);
     dim3 grid1((int)ceil((float)projection.nrows/BLK_SIZE));
-    spm_spv<<<grid1, threads>>>(projection.values, projection.col_ids, projection.row_indx, input.values, input.indices, input.nnz, reduced_input, projection.nrows, alpha);
-    cudaDeviceSynchronize();
+    cudaCheckErr();
+    spm_spv<<<grid1, threads>>>(projection.values, projection.col_ids, projection.row_indx, input.values, input.indices, input.nnz, projection.ncols, reduced_input, projection.nrows, alpha);
+    cudaCheckErr();
     
     // Approximate weights * input by (reduced weight)^T * (reduced input)
     alpha = 1.0;
@@ -85,8 +86,8 @@ SparseVector dsg_fully_connected(SparseVector input, float *weights, float *bias
     cudaMalloc((void**)&reduced_min, sizeof(float));
     cudaMalloc((void**)&reduced_max, sizeof(float));
     dim3 grid2((int)ceil((float)n_outputs/BLK_SIZE));
-    max_reduce<<<grid2, threads, 1>>>(reduced_product, n_outputs, reduced_max);
-    min_reduce<<<grid2, threads, 1>>>(reduced_product, n_outputs, reduced_min);
+    max_reduce<<<grid2, threads>>>(reduced_product, n_outputs, reduced_max);
+    min_reduce<<<grid2, threads>>>(reduced_product, n_outputs, reduced_min);
 
     // Get list of indices of output units whose predicted activations are larger than estimated threshold
     int *significant_unit_indices;
@@ -116,22 +117,38 @@ SparseVector dsg_fully_connected(SparseVector input, float *weights, float *bias
     return output;
 }
 
-__global__ void spm_spv(float *mat_values, int *mat_col_ids, int *mat_row_indx, float *vec_values, int *vec_indices, int vec_nnz, float *output, int output_len, float alpha) {
+__global__ void spm_spv(float *mat_values, int *mat_col_ids, int *mat_row_indx, float *vec_values, int *vec_indices, int vec_nnz, int vec_len, float *output, int output_len, float alpha) {
     unsigned int index = blockIdx.x * BLK_SIZE + threadIdx.x;
     float ans = 0;
+    __shared__ float s_vec_values[BLK_SIZE];
+    __shared__ int s_vec_indices[BLK_SIZE];
 
-    if (index < output_len) {
-        int mat_row_end = mat_row_indx[index + 1];
+    int mat_row_end = index < output_len ? mat_row_indx[index + 1] : 0;
 
-        int mat_pos = mat_row_indx[index];
-        int vec_pos = 0;
-        int mat_col, vec_row;
+    int mat_pos = index <= output_len ? mat_row_indx[index] : 0;
+    int vec_pos = 0;
+    int mat_col, vec_row;
+    int vec_val_index;
+    int mat_col_end;
 
-	while (mat_pos < mat_row_end && vec_pos < vec_nnz) {
-	    mat_col = mat_col_ids[mat_pos];
-	    vec_row = vec_indices[vec_pos];
+    // We load the vector values and indices into shared memory in intervals
+    int num_intervals = ceil((float)vec_nnz / BLK_SIZE);
+    for (int interval = 0; interval < num_intervals; interval++) {
+	vec_val_index = interval * BLK_SIZE + threadIdx.x;
+	s_vec_values[threadIdx.x] = vec_val_index < vec_nnz ? vec_values[vec_val_index] : 0;
+	s_vec_indices[threadIdx.x] = vec_val_index < vec_nnz ? vec_indices[vec_val_index] : vec_len;
+	__syncthreads();
+
+	// This loop calculates the dot product of the vector interval and the corresponding matrix row interval
+	vec_pos = 0;
+        mat_col_end = s_vec_indices[BLK_SIZE - 1];
+        mat_col = mat_pos < mat_row_end ? mat_col_ids[mat_pos] : vec_len;
+
+	while (mat_col <= mat_col_end && vec_pos < BLK_SIZE) {
+	    vec_row = s_vec_indices[vec_pos];
+
 	    if (mat_col == vec_row) {
-		ans += mat_values[mat_pos] * vec_values[vec_pos];
+	        ans += mat_values[mat_pos] * s_vec_values[vec_pos];
 		mat_pos += 1;
 		vec_pos += 1;
 	    } else if (mat_col < vec_row) {
@@ -139,10 +156,15 @@ __global__ void spm_spv(float *mat_values, int *mat_col_ids, int *mat_row_indx, 
 	    } else {
 		vec_pos += 1;
 	    }
+	    mat_col = mat_pos < mat_row_end ? mat_col_ids[mat_pos] : vec_len + 1;
         }
-
-        output[index] = ans * alpha;
+	    
+        __syncthreads();
     }
+
+    if (index < vec_len)
+        output[index] = ans * alpha;
+    
 }
 
 __device__ float atomicMaxf(float *address, float val) {
@@ -165,7 +187,7 @@ __device__ float atomicMinf(float *address, float val) {
 }
 
 __global__ void max_reduce(float *values, int num_elements, float *max) {
-    extern __shared__ float shared_max[];
+    __shared__ float shared_max[BLK_SIZE];
 
     int tid = threadIdx.x;
     int gid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -188,7 +210,7 @@ __global__ void max_reduce(float *values, int num_elements, float *max) {
 }
 
 __global__ void min_reduce(float *values, int num_elements, float *min) {
-    extern __shared__ float shared_min[];
+    __shared__ float shared_min[BLK_SIZE];
 
     int tid = threadIdx.x;
     int gid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -246,17 +268,30 @@ __global__ void filter_activations(float *values, int num_elements, float *min, 
 
 __global__ void filtered_product(float *weights, float *input_values, int *input_indices, int input_nnz, float *biases, int n_outputs, int *significant_unit_indices, int *num_significant_units, float *output_values) {
     unsigned int val_index = blockIdx.x * blockDim.x + threadIdx.x;
+    __shared__ float s_input_values[BLK_SIZE];
+    __shared__ float s_input_indices[BLK_SIZE];
     
-    if (val_index < *num_significant_units) {
-        int unit_index = significant_unit_indices[val_index];
-	int input_index = 0;
-        double ans = 0;
-        
-        for (int i = 0; i < input_nnz; i++) {
-            input_index = input_indices[i];
-	    ans += weights[input_index * n_outputs + unit_index] * input_values[i];
-        }
+    int unit_index = val_index < *num_significant_units ? significant_unit_indices[val_index] : 0;
+    int input_index = 0;
+    double ans = 0;
+    int input_val_index = 0;
+    
+    // We load the input_values into shared memory in intervals
+    int num_intervals = (int)ceil((float)input_nnz/BLK_SIZE);
+    for (int interval = 0; interval < num_intervals; interval++) {
+	input_val_index = interval * BLK_SIZE + threadIdx.x;
+	s_input_values[threadIdx.x] = input_val_index < input_nnz ? input_values[input_val_index] : 0;
+        s_input_indices[threadIdx.x] = input_val_index < input_nnz ? input_indices[input_val_index] : 0;
+	__syncthreads();
 
+        for (int i = 0; i < BLK_SIZE; i++) {
+            input_index = s_input_indices[i];
+	    ans += weights[input_index * n_outputs + unit_index] * s_input_values[i];
+        }
+	__syncthreads();
+    }
+
+    if (val_index < *num_significant_units) {
         output_values[val_index] = ans + biases[unit_index];
     }
 }

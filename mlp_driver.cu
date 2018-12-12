@@ -82,7 +82,7 @@ float dense_infer(MLP mlp, float *input_data, unsigned char *labels) {
 }
 
 
-float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsity, int projection1_size, int projection2_size) {
+float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsity, float epsilon) {
     printf("Starting dsg inference...\n");
 
     // Declare network activations and output
@@ -96,6 +96,8 @@ float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsit
     float max_output = -FLT_MAX;
 
     // Generate linear projections for each layer
+    int projection1_size = log(n_inputs + 1) / pow(epsilon, 2.0);
+    int projection2_size = log(n_hidden1 + 1) / pow(epsilon, 2.0);
     CSR projection1 = get_random_projection(projection1_size, n_inputs, SRP_S, 1);
     CSR projection2 = get_random_projection(projection2_size, n_hidden1, SRP_S, 1);
 
@@ -159,19 +161,17 @@ int main(int argc, char *argv[]) {
     // Parse arguments
     bool use_dsg = false;
     float sparsity = 0.0;
-    int projection1_size = 0;
-    int projection2_size = 0;
-    if (argc != 1 && argc != 4) {
+    float epsilon = 0;
+    if (argc != 1 && argc != 3) {
 	std::cerr << "Usage:" << std::endl;
         std::cerr << "'./mlp_driver' to run traditional dense inference." << std::endl;
-	std::cerr << "'./mlp_driver sparsity projection1_size projection2_size' to run DSG inference using the given sparsity and sizes for random sparse projections." << std::endl;
+	std::cerr << "'./mlp_driver sparsity epsilon' to run DSG inference using the given sparsity and epsilon (approximation error for random sparse projections)." << std::endl;
 	exit(-1);
     }
-    if (argc == 4) {
+    if (argc == 3) {
 	use_dsg = true;
 	sparsity = atof(argv[1]);
-	projection1_size = atoi(argv[2]);
-	projection2_size = atoi(argv[3]);
+	epsilon = atof(argv[2]);
     }
 
     // Load model parameters
@@ -194,7 +194,7 @@ int main(int argc, char *argv[]) {
     float accuracy;
     cudaEventRecord(start);
     if (use_dsg)
-        accuracy = dsg_infer(mlp, input_data, labels, sparsity, projection1_size, projection2_size);
+        accuracy = dsg_infer(mlp, input_data, labels, sparsity, epsilon);
     else
         accuracy = dense_infer(mlp, input_data, labels);
     cudaEventRecord(stop);
