@@ -20,7 +20,7 @@ const int n_hidden1 = 256;
 const int n_hidden2 = 256;
 const int n_outputs = 10;
 
-float sparsity = 0.5;
+const float SRP_S = 3;
 
 float dense_infer(MLP mlp, float *input_data, unsigned char *labels) {
 
@@ -38,8 +38,7 @@ float dense_infer(MLP mlp, float *input_data, unsigned char *labels) {
     unsigned char pred = 0;
     float max_output = -1000;
 
-    int test_size = 60000;
-    for (int n = 0; n < test_size; n++) {
+    for (int n = 0; n < num_images; n++) {
 
 	// Copy input to gpu
 	cudaMemcpy(d_input, input_data + n * image_len, image_len * sizeof(float), cudaMemcpyHostToDevice);
@@ -67,7 +66,7 @@ float dense_infer(MLP mlp, float *input_data, unsigned char *labels) {
 	    num_correct++;
 
         if ((n + 1) % msg_freq == 0)
-            printf("Done with %d instances.\n", n + 1);
+            printf("Done with %d images.\n", n + 1);
     }
 
     // Clean up
@@ -79,11 +78,11 @@ float dense_infer(MLP mlp, float *input_data, unsigned char *labels) {
 
     printf("Finished dense inference.\n");
 
-    return (float)num_correct / test_size;
+    return (float)num_correct / num_images;
 }
 
 
-float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsity) {
+float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsity, int projection1_size, int projection2_size) {
     printf("Starting dsg inference...\n");
 
     // Declare network activations and output
@@ -97,17 +96,15 @@ float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsit
     float max_output = -FLT_MAX;
 
     // Generate linear projections for each layer
-    CSR projection1 = get_random_projection(150, n_inputs, 3, 1);
-    CSR projection2 = get_random_projection(50, n_hidden1, 3, 1);
+    CSR projection1 = get_random_projection(projection1_size, n_inputs, SRP_S, 1);
+    CSR projection2 = get_random_projection(projection2_size, n_hidden1, SRP_S, 1);
 
-    int test_size = 10000;
-
-    struct SparseVector inputs[test_size];
-    for (int n = 0; n < test_size; n++) {
+    struct SparseVector inputs[num_images];
+    for (int n = 0; n < num_images; n++) {
 	inputs[n] = dense_to_SparseVector(input_data + n * image_len, image_len, 1);
     }
 
-    for (int n = 0; n < test_size; n++) {
+    for (int n = 0; n < num_images; n++) {
 
         // Copy network input to gpu
         //s_input = dense_to_SparseVector(input_data + n * image_len, image_len, 1);
@@ -136,7 +133,7 @@ float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsit
             num_correct++;
 
         if ((n + 1) % msg_freq == 0)
-            printf("Done with %d instances.\n", n + 1);
+            printf("Done with %d images.\n", n + 1);
     }
 
     // Clean up
@@ -154,10 +151,28 @@ float dsg_infer(MLP mlp, float *input_data, unsigned char *labels, float sparsit
 
     printf("Finished dsg inference.\n");
 
-    return (float)num_correct / test_size;
+    return (float)num_correct / num_images;
 }
 
 int main(int argc, char *argv[]) {
+
+    // Parse arguments
+    bool use_dsg = false;
+    float sparsity = 0.0;
+    int projection1_size = 0;
+    int projection2_size = 0;
+    if (argc != 1 && argc != 4) {
+	std::cerr << "Usage:" << std::endl;
+        std::cerr << "'./mlp_driver' to run traditional dense inference." << std::endl;
+	std::cerr << "'./mlp_driver sparsity projection1_size projection2_size' to run DSG inference using the given sparsity and sizes for random sparse projections." << std::endl;
+	exit(-1);
+    }
+    if (argc == 4) {
+	use_dsg = true;
+	sparsity = atof(argv[1]);
+	projection1_size = atoi(argv[2]);
+	projection2_size = atoi(argv[3]);
+    }
 
     // Load model parameters
     MLP mlp = load_mlp("models/mlp_weights.bin", n_inputs, n_hidden1, n_hidden2, n_outputs);
@@ -170,10 +185,31 @@ int main(int argc, char *argv[]) {
     unsigned char *labels = (unsigned char*) malloc(num_images * sizeof(unsigned char));
     load_mnist_labels(labels);
 
-    //float dense_accuracy = dense_infer(mlp, input_data, labels);
-    //printf("Dense accuracy: %f\n\n", dense_accuracy);
-    float dsg_accuracy = dsg_infer(mlp, input_data, labels, sparsity);
-    printf("DSG accuracy: %f\n\n", dsg_accuracy);
+    // Declare and create timers
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    // Compute
+    float accuracy;
+    cudaEventRecord(start);
+    if (use_dsg)
+        accuracy = dsg_infer(mlp, input_data, labels, sparsity, projection1_size, projection2_size);
+    else
+        accuracy = dense_infer(mlp, input_data, labels);
+    cudaEventRecord(stop);
+
+    // Get execution time
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    float seconds = milliseconds / 1000.0;
+    float avg_per_example = milliseconds / num_images;
+
+    // Print results
+    printf("Accuracy: %f\n", accuracy);
+    printf("Total execution time: %f seconds\n", seconds);
+    printf("Milliseconds per image: %f milliseconds\n", avg_per_example);
 
     // Clean up
     free(input_data);
